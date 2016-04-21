@@ -1,0 +1,168 @@
+/* REXX                                                               */
+/***********************************************************/
+/* INITIALIZE VARIABLES                                    */
+/***********************************************************/
+ OUT_COUNT = 0
+ INNAME = "'<smf_dump>'"
+ OUTNAME = "'<report_output>'"
+/***********************************************************/
+/* PROCESS THE INPUT FILE (CONTAINING SMF 80 RECORDS)      */
+/***********************************************************/
+ TRACE N
+ "ALLOC DD(INFILE) DA("INNAME") SHR"
+ IF RC<> 0 THEN DO
+    SAY  'ALLOCATION OF ('INNAME') FAILED'
+    EXIT 8
+    END
+ "EXECIO * DISKR INFILE (FINIS STEM RECORD."
+/***********************************************************/
+/* PROCESS EACH RECORD UNTIL END-OF-FILE REACHED           */
+/***********************************************************/
+ DO K = 1 TO RECORD.0
+    PARSE VAR RECORD.K,
+        1  .,
+        2  SMF80RTY, /* Record type: 80 (X'50') */
+        3  SMF80TME, /* Time of Day */
+        7  SMF80DTE, /* Date */
+        11 SMF80SID, /* System ID */
+        15 SMF80DES,
+        17 SMF80EVT, /* Event Code */
+        18 SMF80EVQ, /* Event Code Qualifier */
+        19 SMF80USR,
+        27 SMF80GRP,
+        35 SMF80REL,
+        39 SMF80ATH,
+        40 SMF80REA,
+        41 .,
+        43 SMF80TRM, /* Terminal ID */
+        51 SMF80JBN, /* Job Name */
+        59 .
+
+    hundreths = C2D(SMF80TME) % 100
+    hh = hundreths % 3600
+    hh = RIGHT("0"||hh,2)
+    mm = (hundreths % 60) - (hh * 60)
+    mm = RIGHT("0"||mm,2)
+    ss = hundreths - (hh * 3600) - (mm * 60)
+    ss = RIGHT("0"||ss,2)
+    RECTIME = hh||":"||mm||":"||ss
+
+    PARSE VALUE C2X(SMF80DTE) with,
+        1 .,
+        2 c,
+        3 yy,
+        5 ddd,
+        8 .
+    JDATE = '20'yy||'.'||ddd
+
+    QUALIF = C2D(SMF80EVQ)
+    SELECT
+        WHEN (SMF80EVT = '1'x) THEN DO 
+            EVENT = "Job Init/TSO Login/Logoff"
+            IF SMF80EVQ = D2C(0) THEN QUALIF = "Successful Initiation"
+            IF SMF80EVQ = D2C(1) THEN QUALIF = "Password not valid"
+            IF SMF80EVQ = D2C(2) THEN QUALIF = "Group not valid"
+            IF SMF80EVQ = D2C(3) THEN QUALIF = "OIDCARD not valid"
+            IF SMF80EVQ = D2C(4) THEN QUALIF = "Terminal not valid"
+            IF SMF80EVQ = D2C(5) THEN QUALIF = "Application not valid"
+            IF SMF80EVQ = D2C(6) THEN QUALIF = "Revoked User"
+            IF SMF80EVQ = D2C(7) THEN QUALIF = "Userid auto-revoked"
+            IF SMF80EVQ = D2C(8) THEN QUALIF = "Successful Termination"
+            IF SMF80EVQ = D2C(9) THEN QUALIF = "Undefined User ID"
+            IF SMF80EVQ = D2C(10) THEN QUALIF = "Insufficient sec label auth"
+            IF SMF80EVQ = D2C(11) THEN QUALIF = "Not authorized to sec label"
+            IF SMF80EVQ = D2C(12) THEN QUALIF = "Successful RACINIT initiation"
+            IF SMF80EVQ = D2C(13) THEN QUALIF = "Successful RACINIT delete"
+            IF SMF80EVQ = D2C(14) THEN QUALIF = "System now requires more auth"
+            IF SMF80EVQ = D2C(15) THEN QUALIF = "RJE - Job not authorized"
+            IF SMF80EVQ = D2C(16) THEN QUALIF = "SURROGAT class is inactive"
+            IF SMF80EVQ = D2C(17) THEN QUALIF = "Submitter not auth by user"
+            IF SMF80EVQ = D2C(18) THEN QUALIF = "Successful Initiation"
+            IF SMF80EVQ = D2C(19) THEN QUALIF = "User not authorized to job"
+            IF SMF80EVQ = D2C(20) THEN QUALIF = "Insufficient label authority"
+            IF SMF80EVQ = D2C(21) THEN QUALIF = "Security label missing"
+            IF SMF80EVQ = D2C(22) THEN QUALIF = "Not authorized to security label"
+            IF SMF80EVQ = D2C(23) THEN QUALIF = "Security labels not compatible"
+        END
+        WHEN (SMF80EVT = '2'x) THEN DO
+            EVENT = "Resource Access"
+            IF SMF80EVQ = D2C(0) THEN QUALIF = "Successful"
+        END
+        WHEN (SMF80EVT = '3'x) THEN DO
+            EVENT = "Addvol/Chgvol"
+        END
+        WHEN (SMF80EVT = '4'x) THEN DO
+            EVENT = "Rename resource"
+            IF SMF80EVQ = D2C(0) THEN QUALIF = "Successful"
+        END
+        WHEN (SMF80EVT = '5'x) THEN DO
+            EVENT = "Delete resource"
+            IF SMF80EVQ = D2C(0) THEN QUALIF = "Successful"
+        END
+        WHEN (SMF80EVT = '6'x) THEN DO
+            EVENT = "Delete 1 of Multivol"
+        END
+        WHEN (SMF80EVT = '7'x) THEN DO
+            EVENT = "Define resource"
+            IF SMF80EVQ = D2C(0) THEN QUALIF = "Successful"
+        END
+        OTHERWISE
+            EVENT = C2D(SMF80EVT)
+    END
+
+    AUTH = C2D(SMF80ATH)
+    IF SMF80ATH = '80'x THEN AUTH = "Special - Auditor"
+    IF SMF80ATH = '20'x THEN AUTH = "Auditor - Failsoft"
+    IF SMF80ATH = '00'x THEN AUTH = "None"
+    IF SMF80ATH = '40'x THEN AUTH = "Operations - Exit"
+
+    REASON = C2D(SMF80REA)
+    IF SMF80REA = D2C(0) THEN REASON = "None"
+    IF SMF80REA = D2C(8) THEN REASON = "RACINIT Failure"
+    IF SMF80REA = D2C(16) THEN REASON = "Audit"
+    IF SMF80REA = D2C(32) THEN REASON = "Special"
+    IF SMF80REA = D2C(128) THEN REASON = "SETROPTS AUDIT"
+    IF SMF80REA = D2C(144) THEN REASON = "SETROPTS AUDIT - RACINIT"
+    IF SMF80REA = D2C(160) THEN REASON = "SETROPTS AUDIT - Special"
+
+    IF K=1 THEN DO
+        OUT_COUNT = OUT_COUNT + 1
+        OUT_LINE.OUT_COUNT = LEFT("Time",8),
+            LEFT("Date",8),
+            LEFT("SID",4),
+            LEFT("User",8),
+            LEFT("Group",8),
+            LEFT("Authority Used",20),
+            LEFT("Reason for Log",24),
+            LEFT("Terminal",8),
+            LEFT("Jobname",8),
+            LEFT("Event",30),
+            LEFT("Event Qualifier",40)
+    END
+    OUT_COUNT = OUT_COUNT + 1
+    OUT_LINE.OUT_COUNT =LEFT(RECTIME,8),
+        LEFT(JDATE,8),
+        LEFT(SMF80SID,4),
+        LEFT(SMF80USR,8),
+        LEFT(SMF80GRP,8),
+        LEFT(AUTH,20),
+        LEFT(REASON,24),
+        LEFT(SMF80TRM,8),
+        LEFT(SMF80JBN,8),
+        LEFT(EVENT,30),
+        LEFT(QUALIF,40)
+
+ END
+/***********************************************************/
+/* OPEN THE OUTPUT FILE FOR THE SMF 80 REPORT              */
+/***********************************************************/
+ "ALLOC DSNAME("||OUTNAME||")",
+    "DSORG(PS) LRECL(300) RECFM(F B) ",
+     "TRACKS SPACE(4,5) RELEASE DDNAME(OUTDD)"
+  IF RC<> 0 THEN DO
+     SAY  'ALLOC OF ('||OUTNAME||') FAILED'
+     EXIT 12
+     END
+  "EXECIO * DISKW OUTDD (FINIS STEM OUT_LINE."
+  "FREE ALL"
+ EXIT
